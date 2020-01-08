@@ -1,16 +1,16 @@
 package models
 
 type NewUser struct {
+	About    string `json:"about"`
 	Email    string `json:"email"`
 	Fullname string `json:"fullname"`
-	About    string `json:"about"`
 }
 
 type User struct {
-	Nickname string `json:"nickname"`
+	About    string `json:"about"`
 	Email    string `json:"email"`
 	Fullname string `json:"fullname"`
-	About    string `json:"about"`
+	Nickname string `json:"nickname"`
 }
 
 type Users []*User

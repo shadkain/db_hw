@@ -7,9 +7,9 @@ type NewForum struct {
 }
 
 type Forum struct {
-	Slug    string `json:"slug"`
-	Title   string `json:"title"`
-	Posts   int    `json:"posts"`
-	Threads int    `json:"threads"`
-	User    string `json:"user"`
+	Posts  int    `json:"posts"`
+	Slug   string `json:"slug"`
+	Thread int    `json:"threads"`
+	Title  string `json:"title"`
+	User   string `json:"user"`
 }
