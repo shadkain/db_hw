@@ -5,9 +5,10 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/labstack/echo"
 	"strconv"
+	"net/http"
 )
 
-func (d *Delivery) createPosts(c echo.Context) (Err error) {
+func (d *Delivery) createPosts(c echo.Context) error {
 	newPosts := models.NewPosts{}
 
 	if err := c.Bind(&newPosts); err != nil {
@@ -19,23 +20,23 @@ func (d *Delivery) createPosts(c echo.Context) (Err error) {
 		_, ok := err.(pgx.PgError)
 		if !ok {
 			if err.Error() == "Can't find thread" {
-				if err := c.JSON(404, models.Error{"Can't find thread"}); err != nil {
+				if err := c.JSON(http.StatusNotFound, models.Error{"Can't find thread"}); err != nil {
 					return err
 				}
 				return nil
 			}
-			if err := c.JSON(409, models.Error{err.Error()}); err != nil {
+			if err := c.JSON(http.StatusConflict, models.Error{err.Error()}); err != nil {
 				return err
 			}
 			return nil
 		}
-		if err := c.JSON(404, models.Error{"Can't find user"}); err != nil {
+		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find user"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.JSON(201, posts); err != nil {
+	if err := c.JSON(http.StatusCreated, posts); err != nil {
 		return err
 	}
 
@@ -54,13 +55,13 @@ func (d *Delivery) takePostByID(ctx echo.Context) error {
 
 	postDetails, err := d.uc.GetPostByID(postID, related)
 	if err != nil {
-		if err := ctx.JSON(404, models.Error{"Can't find post"}); err != nil {
+		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find post"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := ctx.JSON(200, postDetails); err != nil {
+	if err := ctx.JSON(http.StatusOK, postDetails); err != nil {
 		return err
 	}
 
@@ -95,20 +96,20 @@ func (d *Delivery) takePosts(ctx echo.Context) error {
 
 	posts, err := d.uc.GetPosts(slugOrID, limit, since, sort, desc)
 	if err != nil {
-		if err := ctx.JSON(404, models.Error{"Can't find thread"}); err != nil {
+		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find thread"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := ctx.JSON(200, posts); err != nil {
+	if err := ctx.JSON(http.StatusOK, posts); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Delivery) changePost(c echo.Context) (Err error) {
+func (d *Delivery) changePost(c echo.Context) error {
 	changePost := models.ChangePost{}
 
 	if err := c.Bind(&changePost); err != nil {
@@ -123,13 +124,13 @@ func (d *Delivery) changePost(c echo.Context) (Err error) {
 
 	post, err := d.uc.SetPost(changePost, postID)
 	if err != nil {
-		if err := c.JSON(404, models.Error{"Can't find post"}); err != nil {
+		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find post"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	if err := c.JSON(200, post); err != nil {
+	if err := c.JSON(http.StatusOK, post); err != nil {
 		return err
 	}
 

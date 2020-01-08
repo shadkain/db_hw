@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"github.com/labstack/echo"
+	"net/http"
 )
 
 func (d *Delivery) takeStatus(ctx echo.Context) error {
@@ -10,20 +11,20 @@ func (d *Delivery) takeStatus(ctx echo.Context) error {
 		return err
 	}
 
-	if err := ctx.JSON(200, status); err != nil {
+	if err := ctx.JSON(http.StatusOK, status); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Delivery) clearAll(c echo.Context) (Err error) {
+func (d *Delivery) clearAll(c echo.Context) error {
 	err := d.uc.ClearAll()
 	if err != nil {
 		return err
 	}
 
-	if err := c.JSON(200, nil); err != nil {
+	if err := c.JSON(http.StatusOK, nil); err != nil {
 		return err
 	}
 

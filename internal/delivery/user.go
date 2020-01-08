@@ -3,44 +3,57 @@ package delivery
 import (
 	"db_hw/internal/models"
 	"github.com/labstack/echo"
+	"net/http"
 )
 
-func (d *Delivery) createUser(c echo.Context) error {
-	newUser := models.NewUser{}
+func (d *Delivery) createThread(c echo.Context) error {
+	newThread := models.NewThread{}
 
-	if err := c.Bind(&newUser); err != nil {
+	if err := c.Bind(&newThread); err != nil {
 		return err
 	}
 
-	users, err := d.uc.GetUsersByNicknameOrEmail(newUser.Email, c.Param("nickname"))
+	forum := c.Param("slug")
+
+	users, err := d.uc.GetUsersByNicknameOrEmail("", newThread.Author)
 	if err != nil {
 		return err
 	}
 	if len(users) > 0 {
-		if err := c.JSON(409, users); err != nil {
+		newThread.Author = users[0].Nickname
+	} else {
+		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find user"}); err != nil {
+			return err
+		}
+		return nil
+	}
+	forums, err := d.uc.GetForumsBySlug(forum)
+	if err != nil {
+		return err
+	}
+	if len(forums) > 0 {
+		forum = forums[0].Slug
+	} else {
+		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find forum"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	user, err := d.uc.AddUser(newUser, c.Param("nickname"))
+	thread, err := d.uc.AddThread(newThread, forum)
 	if err != nil {
-		return err
-	}
-
-	if err := c.JSON(201, user); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (d *Delivery) takeUser(ctx echo.Context) error {
-	user, err := d.uc.GetUserByNickname(ctx.Param("nickname"))
-
-	if err != nil {
-		if err.Error() == "Can't find user by nickname" {
-			if err := ctx.JSON(404, models.Error{err.Error()}); err != nil {
+		if err.Error() == "conflict" {
+			if err := c.JSON(http.StatusConflict, thread); err != nil {
+				return err
+			}
+			return nil
+		}
+		pqErr, ok := err.(pgx.PgError)
+		if !ok {
+			return err
+		}
+		if pqErr.Code == "23503" {
+			if err := c.JSON(http.StatusNotFound, models.Error{"Can't find user"}); err != nil {
 				return err
 			}
 			return nil
@@ -48,24 +61,33 @@ func (d *Delivery) takeUser(ctx echo.Context) error {
 		return err
 	}
 
-	if err := ctx.JSON(200, user); err != nil {
+	if err := c.JSON(http.StatusCreated, thread); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Delivery) takeUsersByForum(ctx echo.Context) error {
-	slug := ctx.Param("slug")
+func (d *Delivery) takeThread(ctx echo.Context) error {
+	slug_or_id := ctx.Param("slug_or_id")
 
-	forums, err := d.uc.GetForumsBySlug(slug)
-	if len(forums) != 1 || err != nil {
-		if err := ctx.JSON(404, models.Error{"Can't find forum by slug"}); err != nil {
+	thread, err := d.uc.GetThreadBySlug(slug_or_id)
+
+	if err != nil {
+		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't thread"}); err != nil {
 			return err
 		}
 		return nil
 	}
 
+	if err := ctx.JSON(http.StatusOK, thread); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *Delivery) takeForumThreads(ctx echo.Context) error {
 	limit := ctx.QueryParam("limit")
 	since := ctx.QueryParam("since")
 	desc := ctx.QueryParam("desc")
@@ -77,50 +99,45 @@ func (d *Delivery) takeUsersByForum(ctx echo.Context) error {
 		desc = "false"
 	}
 
-	users, err := d.uc.GetUsersByForum(slug, limit, since, desc)
+	forums, err := d.uc.GetForumsBySlug(ctx.Param("slug"))
+
+	if err != nil || len(forums) == 0 {
+		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find forum by slug"}); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	threads, err := d.uc.GetThreadsByForum(ctx.Param("slug"), limit, since, desc)
 	if err != nil {
 		return err
 	}
 
-	if err := ctx.JSON(200, users); err != nil {
+	if err := ctx.JSON(http.StatusOK, threads); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *Delivery) changeUser(c echo.Context) (Err error) {
-	newProfile := models.NewUser{}
+func (d *Delivery) changeThread(c echo.Context) error {
+	changeThread := models.ChangeThread{}
 
-	if err := c.Bind(&newProfile); err != nil {
+	if err := c.Bind(&changeThread); err != nil {
 		return err
 	}
 
-	users, err := d.uc.GetUsersByEmail(newProfile.Email)
+	slugOrID := c.Param("slug_or_id")
+
+	thread, err := d.uc.SetThread(changeThread, slugOrID)
 	if err != nil {
-		return err
-	}
-	if len(users) > 0 && !(len(users) == 1 &&
-		users[0].Nickname == c.Param("nickname")) {
-		if err := c.JSON(409, models.Error{"Conflict"}); err != nil {
+		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find thread"}); err != nil {
 			return err
 		}
-
 		return nil
 	}
 
-	user, err := d.uc.SetUser(newProfile, c.Param("nickname"))
-	if err != nil {
-		if err.Error() == "Can't find user by nickname" {
-			if err := c.JSON(404, models.Error{err.Error()}); err != nil {
-				return err
-			}
-			return nil
-		}
-		return err
-	}
-
-	if err := c.JSON(200, user); err != nil {
+	if err := c.JSON(http.StatusOK, thread); err != nil {
 		return err
 	}
 
