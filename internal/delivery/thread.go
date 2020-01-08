@@ -1,7 +1,7 @@
 package delivery
 
 import (
-	"db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/models"
 	"github.com/jackc/pgx"
 	"github.com/labstack/echo"
 	"net/http"

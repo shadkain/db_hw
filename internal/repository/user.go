@@ -2,8 +2,8 @@ package repository
 
 import (
 	"bytes"
-	"db_hw/internal/models"
-	"db_hw/internal/query"
+	"github.com/shadkain/db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/query"
 	"errors"
 	"github.com/jackc/pgx"
 	xsort "sort"

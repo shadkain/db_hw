@@ -1,7 +1,7 @@
 package delivery
 
 import (
-	"db_hw/internal/usecase"
+	"github.com/shadkain/db_hw/internal/usecase"
 	"github.com/labstack/echo"
 )
 

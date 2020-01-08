@@ -1,7 +1,7 @@
 package usecase
 
 import (
-	"db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/models"
 )
 
 func (uc *usecaseImpl) GetStatus() (Status models.Status, Err error) {

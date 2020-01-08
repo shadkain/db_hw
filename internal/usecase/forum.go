@@ -1,7 +1,7 @@
 package usecase
 
 import (
-	"db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/models"
 )
 
 func (uc *usecaseImpl) AddForum(newForum models.NewForum) (Forum models.Forum, Err error) {

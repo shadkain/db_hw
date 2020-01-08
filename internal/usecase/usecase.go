@@ -1,8 +1,8 @@
 package usecase
 
 import (
-	"db_hw/internal/models"
-	"db_hw/internal/repository"
+	"github.com/shadkain/db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/repository"
 )
 
 type usecaseImpl struct {

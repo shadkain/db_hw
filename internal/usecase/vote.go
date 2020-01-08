@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"errors"
-	"db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/models"
 	"github.com/jackc/pgx"
 	"strconv"
 )

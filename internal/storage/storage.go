@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"db_hw/internal/repository"
+	"github.com/shadkain/db_hw/internal/repository"
 	"github.com/jackc/pgx"
 )
 

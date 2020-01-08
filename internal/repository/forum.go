@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"db_hw/internal/models"
-	"db_hw/internal/query"
+	"github.com/shadkain/db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/query"
 )
 
 func (r *repositoryImpl) InsertForum(newForum models.NewForum) (Err error) {

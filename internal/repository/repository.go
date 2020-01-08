@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/models"
 	"github.com/jackc/pgx"
 	"time"
 )
