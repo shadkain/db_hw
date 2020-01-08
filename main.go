@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/labstack/echo"
 	"github.com/shadkain/db_hw/internal/delivery"
 	"github.com/shadkain/db_hw/internal/storage"
@@ -14,6 +15,8 @@ func main() {
 	if err := st.Open("postgresql://forum_user:forum_pass@localhost:5432/forum_db"); err != nil {
 		return
 	}
+
+	fmt.Print("database opened")
 
 	uc := usecase.NewUsecase(st.Repository())
 	handler := delivery.NewDelivery(uc)
