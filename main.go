@@ -11,7 +11,7 @@ func main() {
 	e := echo.New()
 
 	st := storage.NewStorage()
-	if err := st.Open("postgresql://jason:12345678@localhost:2389/dd"); err != nil {
+	if err := st.Open("postgresql://forum_user:forum_pass@localhost:5432/forum_db"); err != nil {
 		return
 	}
 
