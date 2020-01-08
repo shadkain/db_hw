@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/labstack/echo"
 	"github.com/shadkain/db_hw/internal/delivery"
 	"github.com/shadkain/db_hw/internal/storage"
@@ -16,13 +15,11 @@ func main() {
 		return
 	}
 
-	fmt.Print("database opened")
-
 	uc := usecase.NewUsecase(st.Repository())
 	handler := delivery.NewDelivery(uc)
 	handler.Configure(e)
 
-	if err := e.Start("localhost:5000"); err != nil {
+	if err := e.Start("0.0.0.0:5000"); err != nil {
 		return
 	}
 }

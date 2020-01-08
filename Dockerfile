@@ -20,6 +20,8 @@ ENV POSTGRES_USER forum_user
 ENV POSTGRES_PASSWORD forum_pass
 EXPOSE $PORT
 
+EXPOSE 5432
+
 RUN apt-get update && apt-get install -y postgresql-$PGVER
 
 USER postgres
@@ -31,6 +33,6 @@ RUN service postgresql start &&\
 
 VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
-COPY assets/db/db.sql .
+COPY assets/db/db.sql assets/db/db.sql
 COPY --from=builder /usr/src/app/db_hw .
 CMD service postgresql start && ./db_hw
