@@ -31,6 +31,6 @@ RUN service postgresql start &&\
 
 VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
-COPY assers/db/db.sql .
+COPY assets/db/db.sql .
 COPY --from=builder /usr/src/app/db_hw .
 CMD service postgresql start && ./db_hw
