@@ -1,121 +1,49 @@
 package storage
 
 import (
-	"fmt"
-	"github.com/jackc/pgx"
+	"github.com/jmoiron/sqlx"
 	"github.com/shadkain/db_hw/internal/repository"
-	"io/ioutil"
+	// For using pgx driver
+	_ "github.com/jackc/pgx/v4/stdlib"
 )
 
 type Storage struct {
+	db   *sqlx.DB
 	repo repository.Repository
-	db   *pgx.ConnPool
 }
 
 func NewStorage() *Storage {
 	return &Storage{}
 }
 
-const dbSchema = "assets/db/db.sql"
-const maxConn = 2000
-
-func (s *Storage) Open(psqURI string) error {
-	if s.db != nil {
-		return nil
-	}
-	config, err := pgx.ParseURI(psqURI)
+func (this *Storage) Open(url string) error {
+	db, err := sqlx.Open("pgx", url)
 	if err != nil {
 		return err
 	}
 
-	s.db, err = pgx.NewConnPool(
-		pgx.ConnPoolConfig{
-			ConnConfig:     config,
-			MaxConnections: maxConn,
-		},
-	)
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
 
-	if err := s.LoadSchemaSQL(); err != nil {
+	if err := db.Ping(); err != nil {
 		return err
 	}
 
-	return err
-}
-
-func (s *Storage) LoadSchemaSQL() error {
-	if s.db == nil {
-		return pgx.ErrDeadConn
-	}
-
-	content, err := ioutil.ReadFile(dbSchema)
-	if err != nil {
-		return err
-	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err = tx.Exec(string(content)); err != nil {
-		return err
-	}
-	tx.Commit()
-
-	fmt.Println("sql schema loaded")
+	this.db = db
 
 	return nil
 }
 
-func (s *Storage) Disconn() {
-	if s.db != nil {
-		s.db.Close()
-		s.db = nil
+func (this *Storage) Close() {
+	if this.db != nil {
+		this.db.Close()
 	}
 }
 
-func (RS *Storage) Query(sql string, args ...interface{}) (*pgx.Rows, error) {
-	if RS.db == nil {
-		return nil, pgx.ErrDeadConn
-	}
-	return RS.db.Query(sql, args...)
-}
-
-func (RS *Storage) QueryRow(sql string, args ...interface{}) *pgx.Row {
-	if RS.db == nil {
-		return nil
-	}
-	return RS.db.QueryRow(sql, args...)
-}
-
-func (s *Storage) Exec(sql string, args ...interface{}) (pgx.CommandTag, error) {
-	if s.db == nil {
-		return "", pgx.ErrDeadConn
+func (this *Storage) Repository() repository.Repository {
+	if this.repo == nil {
+		this.repo = repository.NewRepository(this.db)
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	tag, err := tx.Exec(sql, args...)
-	if err != nil {
-		return "", err
-	}
-	err = tx.Commit()
-	if err != nil {
-		return "", err
-	}
-
-	return tag, nil
-}
-
-func (s *Storage) Repository() repository.Repository {
-	if s.repo == nil {
-		s.repo = repository.NewRepository(s.db)
-	}
-
-	return s.repo
+	return this.repo
 }
