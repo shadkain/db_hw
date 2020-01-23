@@ -1,303 +1,199 @@
 package repository
 
 import (
+	"fmt"
+	"github.com/jmoiron/sqlx"
 	"github.com/shadkain/db_hw/internal/models"
-	"github.com/shadkain/db_hw/internal/query"
-	"errors"
-	"github.com/jackc/pgx"
+	"github.com/shadkain/db_hw/internal/reqmodels"
 	"strconv"
+	"strings"
 	"time"
 )
 
-func (r *repositoryImpl) InsertPost(newPost models.NewPost, id int, forum string, created time.Time) (LastID int, ThreadID int, Err error) {
-	var lastID, threadID int
-	err := r.db.QueryRow(query.InsertPost, newPost.Author, newPost.Message,
-		newPost.Parent, id, forum).Scan(&lastID, &threadID)
+const (
+	SortFlat       = "flat"
+	SortTree       = "tree"
+	SortParentTree = "parent_tree"
 
-	if err != nil {
-		return lastID, threadID, err
-	}
-	return lastID, threadID, nil
+	pathDelim     = "."
+	maxIDLength   = 7
+	maxTreeLevel  = 5
+	postChunkSize = 50
+	columnCount   = 8
+)
+
+var zeroPath = strings.Repeat("0", maxIDLength)
+
+func (this *repositoryImpl) GetPostByID(id int) (*models.Post, error) {
+	return this.getPost("id=$1", id)
 }
 
-func (r *repositoryImpl) SelectPostByID(ID int) (Post models.Post, Err error) {
-	var posts []models.Post
-	rows, err := r.db.Query(query.SelectPostsByID, ID)
-	defer rows.Close()
+func (this *repositoryImpl) CreatePosts(posts []*reqmodels.PostCreate, thread *models.Thread) (models.Posts, error) {
+	forum, err := this.GetForumSlug(thread.Forum)
 	if err != nil {
-		return models.Post{}, err
+		return nil, err
 	}
 
-	scanPost := models.Post{}
-	for rows.Next() {
-		var timetz time.Time
-		err := rows.Scan(&scanPost.Author, &timetz, &scanPost.Forum,
-			&scanPost.ID, &scanPost.IsEdited, &scanPost.Message, &scanPost.Parent,
-			&scanPost.Thread)
+	now := time.Now()
+	result := make(models.Posts, 0, len(posts))
+	for _, chunk := range this.chunkPosts(posts) {
+		createdIDs, err := this.createPostsChunk(forum, thread, chunk, now)
 		if err != nil {
-			return models.Post{}, err
+			return nil, err
 		}
-		timetz.Format(time.RFC3339Nano)
-		posts = append(posts, scanPost)
-	}
 
-	if len(posts) == 0 {
-		return models.Post{}, errors.New("Can't find user by nickname")
-	}
-	return posts[0], nil
-}
-
-func (r *repositoryImpl) SelectPostByIDThreadID(ID int, threadID int) (Post models.Post, Err error) {
-	var posts []models.Post
-	rows, err := r.db.Query(query.SelectPostsByIDThreadID, ID, threadID)
-	defer rows.Close()
-	if err != nil {
-		return models.Post{}, err
-	}
-
-	scanPost := models.Post{}
-	for rows.Next() {
-		var timetz time.Time
-		err := rows.Scan(&scanPost.Author, &timetz, &scanPost.Forum,
-			&scanPost.ID, &scanPost.IsEdited, &scanPost.Message, &scanPost.Parent,
-			&scanPost.Thread)
+		created, err := this.getPostsByIDs(createdIDs)
 		if err != nil {
-			return models.Post{}, err
+			return nil, err
 		}
-		scanPost.Created = timetz.Format(time.RFC3339Nano)
-		posts = append(posts, scanPost)
+
+		result = append(result, created...)
 	}
 
-	if len(posts) == 0 {
-		return models.Post{}, errors.New("Can't find user by nickname")
-	}
-	return posts[0], nil
+	return result, nil
 }
 
-func (r *repositoryImpl) SelectPosts(threadID int, limit, since, sort, desc string) (Posts *models.Posts, Err error) {
-	posts := models.Posts{}
+func (this *repositoryImpl) UpdatePostMessage(id int, message string) (*models.Post, error) {
+	if message != "" {
+		if _, err := this.db.Exec(
+			`UPDATE post SET "message"=$1, "isEdited"=true WHERE id=$2 AND "message"<>$1`,
+			message, id,
+		); err != nil {
+			return nil, err
+		}
+	}
 
-	var rows *pgx.Rows
+	return this.GetPostByID(id)
+}
+
+func (this *repositoryImpl) chunkPosts(posts []*reqmodels.PostCreate) [][]*reqmodels.PostCreate {
+	chunks := make([][]*reqmodels.PostCreate, 0)
+	for i := 0; i < len(posts); i += postChunkSize {
+		end := i + postChunkSize
+		if end > len(posts) {
+			end = len(posts)
+		}
+
+		chunks = append(chunks, posts[i:end])
+	}
+
+	return chunks
+}
+
+func (this *repositoryImpl) createPostsChunk(forum *models.Forum, thread *models.Thread, posts []*reqmodels.PostCreate, created time.Time) ([]int, error) {
+	columns := columnCount
+	placeholders := make([]string, 0, len(posts))
+	args := make([]interface{}, 0, len(posts)*columns)
+	ids := this.postsIDGenerator.Next(len(posts))
+
+	for i, post := range posts {
+		id := ids[i]
+		path, err := this.getPostPath(id, post.Parent)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, id, thread.ID, thread.Forum, post.Parent, path, post.Author, post.Message, created)
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			i*columns+1, i*columns+2, i*columns+3, i*columns+4, i*columns+5, i*columns+6, i*columns+7, i*columns+8,
+		))
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO post (id, thread, forum, parent, path, author, message, created) VALUES %s",
+		strings.Join(placeholders, ","),
+	)
+
 	var err error
-	if sort == "flat" {
-		if desc == "false" {
-			rows, err = r.db.Query(query.SelectPostsFlat, threadID, limit, since)
-		} else {
-			rows, err = r.db.Query(query.SelectPostsFlatDesc, threadID, limit, since)
-		}
-
-	} else if sort == "tree" {
-		if desc == "false" {
-			if since != "0" && since != "999999999" {
-				rows, err = r.db.Query(query.SelectPostsTree, threadID, 100000)
-			} else {
-				rows, err = r.db.Query(query.SelectPostsTree, threadID, limit)
-			}
-		} else {
-			if since != "0" && since != "999999999" {
-				rows, err = r.db.Query(query.SelectPostsTreeSinceDesc, threadID)
-			} else {
-				rows, err = r.db.Query(query.SelectPostsTreeDesc, threadID, limit, 1000000)
-			}
-		}
-	} else if sort == "parent_tree" {
-		if desc == "false" {
-			rows, err = r.db.Query(query.SelectPostsParentTree, threadID)
-		} else {
-			rows, err = r.db.Query(query.SelectPostsParentTreeDesc, threadID)
+	for {
+		_, err = this.db.Exec(query, args...)
+		if err == nil || err.Error() != "ERROR: deadlock detected (SQLSTATE 40P01)" {
+			break
 		}
 	}
 
-	if sort != "parent_tree" {
-		defer rows.Close()
-		if err != nil {
-			return &posts, err
-		}
-
-		for rows.Next() {
-			scanPost := models.Post{}
-			var timetz time.Time
-			err := rows.Scan(&scanPost.Author, &timetz, &scanPost.Forum,
-				&scanPost.ID, &scanPost.IsEdited, &scanPost.Message, &scanPost.Parent,
-				&scanPost.Thread)
-			if err != nil {
-				return &posts, err
-			}
-			scanPost.Created = timetz.Format(time.RFC3339Nano)
-			posts = append(posts, &scanPost)
-		}
-	} else {
-		if err != nil {
-			rows.Close()
-			return &posts, err
-		}
-
-		count := 0
-		limitDigit, _ := strconv.Atoi(limit)
-
-		for rows.Next() {
-			scanPost := models.Post{}
-			var timetz time.Time
-			err := rows.Scan(&scanPost.Author, &timetz, &scanPost.Forum,
-				&scanPost.ID, &scanPost.IsEdited, &scanPost.Message, &scanPost.Parent,
-				&scanPost.Thread)
-			if err != nil {
-				return &posts, err
-			}
-
-			if scanPost.Parent == 0 {
-				count = count + 1
-			}
-			if count > limitDigit && (since == "0" || since == "999999999") {
-				break
-			} else {
-				scanPost.Created = timetz.Format(time.RFC3339Nano)
-				posts = append(posts, &scanPost)
-			}
-
-		}
-		rows.Close()
-	}
-
-	if since != "0" && since != "999999999" && sort == "tree" {
-		limitDigit, _ := strconv.Atoi(limit)
-		sinceDigit, _ := strconv.Atoi(since)
-		sincePosts := models.Posts{}
-		counter := 0
-
-		if desc == "false" {
-			startIndex := 1000000000
-			//postMinStartIndex
-			minValue := 100000000000
-			for i := 0; i < len(posts); i++ {
-				if posts[i].ID == sinceDigit {
-					startIndex = i + 1
-					break
-				}
-				if (posts[i].ID > sinceDigit) && (posts[i].ID < minValue) {
-					startIndex = i
-					minValue = posts[i].ID
-				}
-			}
-			sincePostsCount := 0
-			counter = startIndex
-			for sincePostsCount < limitDigit && counter < len(posts) {
-				scanPost := models.Post{}
-				scanPost = *posts[counter]
-				sincePosts = append(sincePosts, &scanPost)
-				if sort == "tree" {
-					sincePostsCount++
-				} else {
-					if scanPost.Parent == 0 {
-						sincePostsCount++
-					}
-				}
-				counter++
-			}
-		} else {
-			startIndex := -1000000000
-			//postMinStartIndex
-			maxValue := 0
-			for i := len(posts) - 1; i >= 0; i-- {
-				if posts[i].ID == sinceDigit {
-					startIndex = i - 1
-					break
-				}
-				if (posts[i].ID < sinceDigit) && (posts[i].ID > maxValue) {
-					startIndex = i
-					maxValue = posts[i].ID
-				}
-			}
-
-			sincePostsCount := 0
-			counter = startIndex
-			for sincePostsCount < limitDigit && counter >= 0 {
-				scanPost := models.Post{}
-				scanPost = *posts[counter]
-				sincePosts = append(sincePosts, &scanPost)
-				if sort == "tree" {
-					sincePostsCount++
-				} else {
-					if scanPost.Parent == 0 {
-						sincePostsCount++
-					}
-				}
-				counter--
-			}
-		}
-		return &sincePosts, nil
-	}
-
-	if since != "0" && since != "999999999" && sort == "parent_tree" {
-		limitDigit, _ := strconv.Atoi(limit)
-		sinceDigit, _ := strconv.Atoi(since)
-		sincePosts := models.Posts{}
-		counter := 0
-		if desc == "false" {
-			startIndex := 1000000000
-			minValue := 100000000000
-			for i := 0; i < len(posts); i++ {
-				if posts[i].ID == sinceDigit {
-					startIndex = i + 1
-					break
-				}
-				if (posts[i].ID > sinceDigit) && (posts[i].ID < minValue) {
-					startIndex = i
-					minValue = posts[i].ID
-				}
-			}
-			sincePostsCount := 0
-			counter = startIndex
-			for sincePostsCount < limitDigit && counter < len(posts) {
-				scanPost := models.Post{}
-				scanPost = *posts[counter]
-				sincePosts = append(sincePosts, &scanPost)
-				sincePostsCount++
-				counter++
-			}
-		} else {
-			startIndex := -1000000000
-			//postMinStartIndex
-			maxValue := 100000000000
-			for i := len(posts) - 1; i >= 0; i-- {
-				if posts[i].ID == sinceDigit {
-					startIndex = i + 1
-					break
-				}
-				if (posts[i].ID < sinceDigit) && (posts[i].ID < maxValue) {
-					startIndex = i
-					maxValue = posts[i].ID
-				}
-			}
-
-			sincePostsCount := 0
-			counter = startIndex
-			for sincePostsCount < limitDigit && counter < len(posts) {
-				scanPost := models.Post{}
-				scanPost = *posts[counter]
-				sincePosts = append(sincePosts, &scanPost)
-				if sort == "tree" {
-					sincePostsCount++
-				} else {
-					if scanPost.Parent == 0 {
-						sincePostsCount++
-					}
-				}
-				counter++
-			}
-		}
-		return &sincePosts, nil
-	}
-
-	return &posts, nil
+	return ids, err
 }
 
-func (r *repositoryImpl) UpdatePost(changePost models.ChangePost, postID int) (Err error) {
-	rows, err := r.db.Query(query.UpdatePostByID, changePost.Message, true, postID)
-	defer rows.Close()
+func (this *repositoryImpl) getPost(filter string, params ...interface{}) (*models.Post, error) {
+	return this.getPostFields("*", filter, params...)
+}
 
-	if err != nil {
-		return err
+func (this *repositoryImpl) getPostFields(fields, filter string, params ...interface{}) (*models.Post, error) {
+	var post models.Post
+	if err := this.db.Get(
+		&post,
+		"SELECT "+fields+" FROM post WHERE "+filter,
+		params...,
+	); err != nil {
+		return nil, Error(err)
 	}
-	return nil
+
+	return &post, nil
+}
+
+func (this *repositoryImpl) getPostsByIDs(ids []int) (models.Posts, error) {
+	posts := make(models.Posts, 0)
+
+	if query, args, err := sqlx.In(
+		`SELECT * FROM post WHERE id IN (?) ORDER BY id`,
+		ids,
+	); err != nil {
+		return nil, err
+	} else {
+		query = this.db.Rebind(query)
+		err = this.db.Select(&posts, query, args...)
+		return posts, err
+	}
+}
+
+func (this *repositoryImpl) getPosts(orderBy []string, limit int, filter string, params ...interface{}) (models.Posts, error) {
+	query := fmt.Sprintf(`SELECT * FROM post WHERE %s ORDER BY %s`, filter, strings.Join(orderBy, ","))
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	posts := make(models.Posts, 0, limit)
+	err := this.db.Select(&posts, query, params...)
+
+	return posts, err
+}
+
+func (this *repositoryImpl) getPostPath(id, parentID int) (string, error) {
+	var base string
+
+	if parentID == 0 {
+		base = this.getZeroPostPath()
+	} else {
+		parent, err := this.getPostFields("path", "id=$1", parentID)
+		if err != nil {
+			return "", err
+		}
+
+		base = parent.Path
+	}
+
+	path := strings.Replace(base, zeroPath, this.padPostID(id), 1)
+
+	return path, nil
+}
+
+func (this *repositoryImpl) getZeroPostPath() string {
+	path := zeroPath
+
+	for i := 0; i < maxTreeLevel-1; i++ {
+		path += pathDelim + zeroPath
+	}
+
+	return path
+}
+
+func (this *repositoryImpl) padPostID(id int) string {
+	return fmt.Sprintf("%0"+strconv.Itoa(maxIDLength)+"d", id)
+}
+
+func (this *repositoryImpl) updatePostPath(tx *sqlx.Tx, id int, path string) error {
+	_, err := tx.Exec(`UPDATE post SET path=$1 WHERE id=$2`, path, id)
+	return err
 }

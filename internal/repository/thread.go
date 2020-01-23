@@ -1,127 +1,102 @@
 package repository
 
 import (
+	"fmt"
 	"github.com/shadkain/db_hw/internal/models"
-	"github.com/shadkain/db_hw/internal/query"
-	"github.com/jackc/pgx"
-	"time"
+	"github.com/shadkain/db_hw/internal/reqmodels"
+	"strconv"
 )
 
-func (r *repositoryImpl) InsertThread(newThread models.NewThread, forum string) (LastID int, Err error) {
-	var lastID int
-	if newThread.Slug == "" {
-		if newThread.Created == "" {
-			Err = r.db.QueryRow(query.InsertThreadWithoutCreated, newThread.Author,
-				newThread.Message, newThread.Title, forum).Scan(&lastID)
-		} else {
-			Err = r.db.QueryRow(query.InsertThread, newThread.Author, newThread.Created,
-				newThread.Message, newThread.Title, forum).Scan(&lastID)
-		}
+func (this *repositoryImpl) GetThreadByID(id int) (*models.Thread, error) {
+	return this.getThread("*", "id=$1", id)
+}
+
+func (this *repositoryImpl) GetThreadBySlug(slug string) (*models.Thread, error) {
+	return this.getThread("*", "slug=$1", slug)
+}
+
+func (this *repositoryImpl) GetThreadBySlugOrID(slugOrID string) (*models.Thread, error) {
+	return this.GetThreadFieldsBySlugOrID("*", slugOrID)
+}
+
+func (this *repositoryImpl) GetForumThreads(forum string, limit int, desc bool) ([]*models.Thread, error) {
+	query := fmt.Sprintf(
+		"SELECT * FROM thread WHERE forum=$1 ORDER BY created %s LIMIT $2",
+		this.getOrder(desc),
+	)
+
+	var threads []*models.Thread
+	err := this.db.Select(&threads, query, forum, limit)
+
+	return threads, err
+}
+
+func (this *repositoryImpl) GetForumThreadsSince(forum, since string, limit int, desc bool) ([]*models.Thread, error) {
+	createdCond := ">="
+	if desc {
+		createdCond = "<="
+	}
+
+	query := fmt.Sprintf(
+		"SELECT * FROM thread WHERE forum=$1 AND created %s $2 ORDER BY created %s LIMIT $3",
+		createdCond, this.getOrder(desc),
+	)
+
+	threads := make([]*models.Thread, 0)
+	err := this.db.Select(&threads, query, forum, since, limit)
+
+	return threads, err
+}
+
+func (this *repositoryImpl) GetThreadFieldsBySlugOrID(fields, slugOrID string) (*models.Thread, error) {
+	if id, err := strconv.Atoi(slugOrID); err != nil {
+		return this.getThread(fields, "slug=$1", slugOrID)
 	} else {
-		if newThread.Created == "" {
-			Err = r.db.QueryRow(query.InsertThreadWithSlugWithoutCreated, newThread.Author,
-				newThread.Message, newThread.Title, forum, newThread.Slug).Scan(&lastID)
-		} else {
-			Err = r.db.QueryRow(query.InsertThreadWithSlug, newThread.Author, newThread.Created,
-				newThread.Message, newThread.Title, forum, newThread.Slug).Scan(&lastID)
-		}
+		return this.getThread(fields, "id=$1", id)
 	}
-	if Err != nil {
-		return lastID, Err
-	}
-	return lastID, nil
 }
 
-func (r *repositoryImpl) SelectThreadsBySlug(slug string) (Threads *models.Threads, Err error) {
-	threads := models.Threads{}
-
-	rows, err := r.db.Query(query.SelectThreadsBySlug, slug)
-
-	defer rows.Close()
+func (this *repositoryImpl) CreateThread(forum *models.Forum, thread reqmodels.ThreadCreate) (*models.Thread, error) {
+	var id int
+	err := this.db.
+		QueryRow(
+			`INSERT INTO thread (title, author, forum, message, slug, created) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+			thread.Title, thread.Author, forum.Slug, thread.Message, thread.Slug, thread.Created,
+		).
+		Scan(&id)
 	if err != nil {
-		return &threads, err
+		return nil, err
 	}
 
-	for rows.Next() {
-		scanThread := models.Thread{}
-		var timetz time.Time
-		err := rows.Scan(&scanThread.Author, &timetz, &scanThread.Forum,
-			&scanThread.ID, &scanThread.Message, &scanThread.Slug, &scanThread.Title,
-			&scanThread.Votes)
-		if err != nil {
-			return &threads, err
-		}
-		scanThread.Created = timetz.Format(time.RFC3339Nano)
-		threads = append(threads, &scanThread)
-	}
-	return &threads, nil
+	return this.GetThreadByID(id)
 }
 
-func (r *repositoryImpl) SelectThreadsByID(id int) (Threads *models.Threads, Err error) {
-	threads := models.Threads{}
-
-	rows, err := r.db.Query(query.SelectThreadsByID, id)
-
-	defer rows.Close()
+func (this *repositoryImpl) UpdateThread(threadSlugOrID string, message, title string) (*models.Thread, error) {
+	thread, err := this.GetThreadBySlugOrID(threadSlugOrID)
 	if err != nil {
-		return &threads, err
+		return nil, err
 	}
 
-	for rows.Next() {
-		scanThread := models.Thread{}
-		var timetz time.Time
-		err := rows.Scan(&scanThread.Author, &timetz, &scanThread.Forum,
-			&scanThread.ID, &scanThread.Message, &scanThread.Slug, &scanThread.Title,
-			&scanThread.Votes)
-		if err != nil {
-			return &threads, err
-		}
-		scanThread.Created = timetz.Format(time.RFC3339Nano)
-		threads = append(threads, &scanThread)
+	if message != "" {
+		thread.Message = message
 	}
-	return &threads, nil
+	if title != "" {
+		thread.Title = title
+	}
+
+	_, err = this.db.Exec(
+		`UPDATE thread SET "message"=$1, title=$2 WHERE id=$3`,
+		thread.Message, thread.Title, thread.ID,
+	)
+
+	return thread, err
 }
 
-func (r *repositoryImpl) SelectThreadsByForum(forum string, limit string, since string, desc string) (Threads *models.Threads, Err error) {
-	threads := models.Threads{}
-	var rows *pgx.Rows
-	var err error
-	if since == "" && desc == "false" {
-		rows, err = r.db.Query(query.SelectThreadsByForum, forum, limit)
-	} else if since != "" && desc == "false" {
-		rows, err = r.db.Query(query.SelectThreadsByForumSince, forum, limit, since)
-	} else if since == "" && desc == "true" {
-		rows, err = r.db.Query(query.SelectThreadsByForumDesc, forum, limit)
-	} else {
-		rows, err = r.db.Query(query.SelectThreadsByForumSinceDesc, forum, limit, since)
-	}
-	defer rows.Close()
+func (this *repositoryImpl) getThread(fields, filter string, params ...interface{}) (*models.Thread, error) {
+	t := models.Thread{}
+	err := this.db.Get(&t, "SELECT "+fields+" FROM thread WHERE "+filter, params...)
 	if err != nil {
-		return &threads, err
+		return nil, Error(err)
 	}
-
-	for rows.Next() {
-		scanThread := models.Thread{}
-		var timetz time.Time
-		err := rows.Scan(&scanThread.Author, &timetz, &scanThread.Forum,
-			&scanThread.ID, &scanThread.Message, &scanThread.Slug, &scanThread.Title,
-			&scanThread.Votes)
-		if err != nil {
-			return &threads, err
-		}
-		scanThread.Created = timetz.Format(time.RFC3339Nano)
-		threads = append(threads, &scanThread)
-	}
-	return &threads, nil
-}
-
-func (r *repositoryImpl) UpdateThread(changeThread models.ChangeThread, id int) (Err error) {
-	rows, err := r.db.Query(query.UpdateThreadByID, changeThread.Message,
-		changeThread.Title, id)
-	defer rows.Close()
-
-	if err != nil {
-		return err
-	}
-	return nil
+	return &t, nil
 }

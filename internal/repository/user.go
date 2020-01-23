@@ -1,173 +1,105 @@
 package repository
 
 import (
-	"bytes"
+	"database/sql"
 	"github.com/shadkain/db_hw/internal/models"
-	"github.com/shadkain/db_hw/internal/query"
-	"errors"
-	"github.com/jackc/pgx"
-	xsort "sort"
-	"strconv"
-	"strings"
+	"github.com/shadkain/db_hw/internal/vars"
 )
 
-func (r *repositoryImpl) InsertUser(newUser models.NewUser, nickname string) (Err error) {
-	var lastID int
-	err := r.db.QueryRow(query.InsertUser, newUser.About, newUser.Email,
-		newUser.Fullname, nickname).Scan(&lastID)
-
-	if err != nil {
-		return err
+func (this *repositoryImpl) GetUserByNickname(nickname string) (*models.User, error) {
+	var user models.User
+	if err := this.db.Get(
+		&user,
+		`SELECT * FROM "user" WHERE nickname=$1`,
+		nickname,
+	); err != nil {
+		return nil, Error(err)
 	}
-	return nil
+
+	return &user, nil
 }
 
-func (r *repositoryImpl) SelectUsersByForum(slug, limit, since, desc string) (Users *models.Users, Err error) {
-	users := models.Users{}
-	var rows *pgx.Rows
-	var err error
-
-	if desc == "false" {
-		rows, err = r.db.Query(query.SelectUsersByForumSlug, slug)
-	} else {
-		rows, err = r.db.Query(query.SelectUsersByForumSlugDesc, slug)
+func (this *repositoryImpl) GetUserByEmail(email string) (*models.User, error) {
+	var user models.User
+	if err := this.db.Get(
+		&user,
+		`SELECT * FROM "user" WHERE email=$1`,
+		email,
+	); err != nil {
+		return nil, Error(err)
 	}
 
-	defer rows.Close()
-	if err != nil {
-		return &users, err
-	}
-
-	for rows.Next() {
-		scanUser := models.User{}
-		err := rows.Scan(&scanUser.About, &scanUser.Email, &scanUser.Fullname,
-			&scanUser.Nickname)
-		if err != nil {
-			return &users, err
-		}
-		users = append(users, &scanUser)
-	}
-
-	resUsers := models.Users{}
-
-	limitDigit, _ := strconv.Atoi(limit)
-
-	if desc == "false" {
-
-		xsort.Slice(users, func(i, j int) bool {
-			return bytes.Compare([]byte(strings.ToLower(users[i].Nickname)), []byte(strings.ToLower(users[j].Nickname))) < 0
-		})
-
-		if since == "" {
-			for i := 0; i < limitDigit && i < len(users); i++ {
-				resUsers = append(resUsers, users[i])
-			}
-		} else {
-			j := 0
-			for i := 0; j < limitDigit && i < len(users); {
-				if bytes.Compare([]byte(strings.ToLower(users[i].Nickname)), []byte(strings.ToLower(since))) > 0 {
-					resUsers = append(resUsers, users[i])
-					j++
-				}
-				i++
-			}
-		}
-	} else {
-
-		xsort.Slice(users, func(i, j int) bool {
-			return bytes.Compare([]byte(strings.ToLower(users[i].Nickname)), []byte(strings.ToLower(users[j].Nickname))) > 0
-		})
-
-		if since == "" {
-			for i := 0; i < limitDigit && i < len(users); i++ {
-				resUsers = append(resUsers, users[i])
-			}
-		} else {
-			j := 0
-			for i := 0; j < limitDigit && i < len(users); {
-				if bytes.Compare([]byte(strings.ToLower(users[i].Nickname)), []byte(strings.ToLower(since))) < 0 {
-					resUsers = append(resUsers, users[i])
-					j++
-				}
-				i++
-			}
-		}
-	}
-
-	return &resUsers, nil
+	return &user, nil
 }
 
-func (r *repositoryImpl) SelectUsersByNicknameOrEmail(email string, nickname string) (Users []models.User, Err error) {
-	var users []models.User
-	rows, err := r.db.Query(query.SelectUsersByNicknameOrEmail, email, nickname)
-	defer rows.Close()
-	if err != nil {
-		return users, err
+func (this *repositoryImpl) GetUserNickname(nickname string) (string, error) {
+	if realNickname, err := this.userCache.GetNicknameCaseInsensitive(nickname); err == nil {
+		return realNickname, nil
 	}
 
-	scanUser := models.User{}
-	for rows.Next() {
-		err := rows.Scan(&scanUser.About, &scanUser.Email, &scanUser.Fullname,
-			&scanUser.Nickname)
-		if err != nil {
-			return users, err
-		}
-		users = append(users, scanUser)
+	var user models.User
+	if err := this.db.Get(
+		&user,
+		`SELECT id, nickname FROM "user" WHERE nickname=$1`,
+		nickname,
+	); err != nil {
+		return "", Error(err)
 	}
+
+	this.userCache.Set(user.ID, user.Nickname)
+
+	return user.Nickname, nil
+}
+
+func (this *repositoryImpl) GetUsersByNicknameOrEmail(nickname, email string) ([]*models.User, error) {
+	var users []*models.User
+	if err := this.db.Select(
+		&users,
+		`SELECT * FROM "user" WHERE nickname=$1 OR email=$2`,
+		nickname, email,
+	); err != nil {
+		return nil, Error(err)
+	}
+
 	return users, nil
 }
 
-func (r *repositoryImpl) SelectUserByNickname(nickname string) (user models.User, Err error) {
-	var users []models.User
-	rows, err := r.db.Query(query.SelectUsersByNickname, nickname)
-	defer rows.Close()
-	if err != nil {
-		return models.User{}, err
+func (this *repositoryImpl) CreateUser(nickname, email, fullname, about string) (*models.User, error) {
+	var id int
+	if err := this.db.QueryRow(
+		`INSERT INTO "user" (nickname, email, fullname, about) VALUES ($1, $2, $3, $4) RETURNING id`,
+		nickname, email, fullname, about,
+	).Scan(&id); err != nil {
+		return nil, err
 	}
 
-	scanUser := models.User{}
-	for rows.Next() {
-		err := rows.Scan(&scanUser.About, &scanUser.Email, &scanUser.Fullname,
-			&scanUser.Nickname)
-		if err != nil {
-			return models.User{}, err
-		}
-		users = append(users, scanUser)
-	}
+	this.userCache.Set(id, nickname)
 
-	if len(users) == 0 {
-		return models.User{}, errors.New("Can't find user by nickname")
-	}
-	return users[0], nil
+	return this.getUserByID(id)
 }
 
-func (r *repositoryImpl) SelectUsersByEmail(email string) (Users []models.User, Err error) {
-	var users []models.User
-	rows, err := r.db.Query(query.SelectUsersByEmail, email)
-	defer rows.Close()
-	if err != nil {
-		return users, err
+func (this *repositoryImpl) UpdateUserByNickname(nickname, email, fullname, about string) error {
+	if result, err := this.db.Exec(
+		`UPDATE "user" SET email=$2, fullname=$3, about=$4 WHERE nickname=$1`,
+		nickname, email, fullname, about,
+	); err != nil {
+		return Error(err)
+	} else if rows, _ := result.RowsAffected(); rows == 0 {
+		return vars.ErrNotFound
 	}
 
-	scanUser := models.User{}
-	for rows.Next() {
-		err := rows.Scan(&scanUser.About, &scanUser.Email, &scanUser.Fullname,
-			&scanUser.Nickname)
-		if err != nil {
-			return users, err
-		}
-		users = append(users, scanUser)
-	}
-	return users, nil
-}
-
-func (r *repositoryImpl) UpdateUser(newProfile models.NewUser, nickname string) (Err error) {
-	rows, err := r.db.Query(query.UpdateUserByNickname, newProfile.About, newProfile.Email,
-		newProfile.Fullname, nickname)
-	defer rows.Close()
-
-	if err != nil {
-		return err
-	}
 	return nil
+}
+
+func (this *repositoryImpl) getUserByID(userID int) (*models.User, error) {
+	var user models.User
+	if err := this.db.Get(
+		&user,
+		`SELECT * FROM "user" WHERE id=$1`,
+		userID,
+	); err == sql.ErrNoRows {
+		return nil, vars.ErrNotFound
+	}
+
+	return &user, nil
 }
