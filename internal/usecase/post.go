@@ -1,163 +1,84 @@
 package usecase
 
 import (
-	"errors"
+	"fmt"
 	"github.com/shadkain/db_hw/internal/models"
-	"strconv"
-	"strings"
-	"time"
+	"github.com/shadkain/db_hw/internal/reqmodels"
+	"github.com/shadkain/db_hw/internal/vars"
 )
 
-const date = "1970-01-01T00:00:00.000Z"
-
-func (uc *usecaseImpl) AddPosts(newPosts models.NewPosts, slug_or_id string) (Posts models.Posts, Err error) {
-	var forum string
-	id, err := strconv.Atoi(slug_or_id)
+func (this *usecaseImpl) GetPostDetails(id int, related []string) (*models.PostDetails, error) {
+	post, err := this.repo.GetPostByID(id)
 	if err != nil {
-		threads, err := uc.repo.SelectThreadsBySlug(slug_or_id)
-		if err != nil {
-			return models.Posts{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Posts{}, errors.New("Can't find thread")
-		}
-		forum = (*threads)[0].Forum
-		id = (*threads)[0].ID
-	} else {
-		threads, err := uc.repo.SelectThreadsByID(id)
-		if err != nil {
-			return models.Posts{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Posts{}, errors.New("Can't find thread")
-		}
-		forum = (*threads)[0].Forum
-		id = (*threads)[0].ID
+		return nil, err
 	}
 
-	posts := models.Posts{}
-	created := time.Now()
-
-	for _, newPost := range newPosts {
-		if newPost.Parent != 0 {
-			_, err := uc.repo.SelectPostByIDThreadID(newPost.Parent, id)
-			if err != nil {
-				return models.Posts{}, err
-			}
-		}
-
-		lastID, threadID, err := uc.repo.InsertPost(*newPost, id, forum, created)
-		if err != nil {
-			return models.Posts{}, err
-		}
-		post := models.Post{
-			Author:   newPost.Author,
-			Created:  "",
-			Forum:    forum,
-			ID:       lastID,
-			IsEdited: false,
-			Message:  newPost.Message,
-			Parent:   newPost.Parent,
-			Thread:   threadID,
-		}
-		posts = append(posts, &post)
+	details := models.PostDetails{
+		Post: post,
 	}
-	return posts, nil
+
+	for _, r := range related {
+		switch r {
+		case "user":
+			details.Author, err = this.repo.GetUserByNickname(post.Author)
+		case "forum":
+			details.Forum, err = this.repo.GetForumBySlug(post.Forum)
+		case "thread":
+			details.Thread, err = this.repo.GetThreadByID(post.Thread)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &details, nil
 }
 
-func (uc *usecaseImpl) GetPostByID(ID int, related string) (Post models.PostDetails, Err error) {
-	var postDetails models.PostDetails
-
-	post, err := uc.repo.SelectPostByID(ID)
+func (this *usecaseImpl) CreatePosts(threadSlugOrID string, posts []*reqmodels.PostCreate) (models.Posts, error) {
+	thread, err := this.repo.GetThreadFieldsBySlugOrID("id, forum", threadSlugOrID)
 	if err != nil {
-		return postDetails, err
-	}
-	post.Created = date
-	postDetails.Post = post
-
-	var user models.User
-	if strings.Contains(related, "user") {
-		user, err = uc.repo.SelectUserByNickname(post.Author)
-		if err != nil {
-			return postDetails, nil
-		}
-		postDetails.User = user
+		return nil, err
 	}
 
-	if strings.Contains(related, "thread") {
-		threads, err := uc.repo.SelectThreadsByID(post.Thread)
-		if err != nil || len(*threads) != 1 {
-			return postDetails, nil
-		}
-
-		postDetails.Thread = (*threads)[0]
+	if err := this.checkPostsCreate(posts, thread.ID); err != nil {
+		return nil, err
 	}
 
-	if strings.Contains(related, "forum") {
-		forums, err := uc.repo.SelectForumsBySlug(post.Forum)
-		if err != nil || len(forums) != 1 {
-			return postDetails, nil
-		}
-
-		postDetails.Forum = forums[0]
-	}
-
-	return postDetails, nil
+	return this.repo.CreatePosts(posts, thread)
 }
 
-func (uc *usecaseImpl) GetPosts(slugOrID, limit, since, sort, desc string) (Posts *models.Posts, Err error) {
-	var thread models.Thread
-	id, err := strconv.Atoi(slugOrID)
-	if err != nil {
-		threads, err := uc.repo.SelectThreadsBySlug(slugOrID)
-		if err != nil {
-			return &models.Posts{}, err
-		}
-		if len(*threads) != 1 {
-			return &models.Posts{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
-	} else {
-		threads, err := uc.repo.SelectThreadsByID(id)
-		if err != nil {
-			return &models.Posts{}, err
-		}
-		if len(*threads) != 1 {
-			return &models.Posts{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
-	}
-
-	posts, err := uc.repo.SelectPosts(thread.ID, limit, since, sort, desc)
-	if err != nil {
-		return posts, err
-	}
-
-	return posts, err
+func (this *usecaseImpl) UpdatePost(id int, message string) (*models.Post, error) {
+	return this.repo.UpdatePostMessage(id, message)
 }
 
-func (uc *usecaseImpl) SetPost(changePost models.ChangePost, postID int) (Post models.Post, Err error) {
-	post, err := uc.repo.SelectPostByID(postID)
-	if err != nil {
-		return post, err
+func (this *usecaseImpl) checkPostsCreate(posts []*reqmodels.PostCreate, threadID int) error {
+	for _, post := range posts {
+		if err := this.checkPostCreate(post, threadID); err != nil {
+			return err
+		}
 	}
 
-	post.Created = date
-	if changePost.Message == "" {
-		changePost.Message = post.Message
-		post.IsEdited = false
-		return post, nil
-	} else if changePost.Message == post.Message {
-		post.IsEdited = false
-		return post, nil
-	} else {
-		post.Message = changePost.Message
-	}
-	post.IsEdited = true
+	return nil
+}
 
-	if err := uc.repo.UpdatePost(changePost, postID); err != nil {
-		return models.Post{}, err
+func (this *usecaseImpl) checkPostCreate(post *reqmodels.PostCreate, threadID int) error {
+	if _, err := this.repo.GetUserNickname(post.Author); err != nil {
+		return err
 	}
 
-	return post, nil
+	if post.Parent != 0 {
+		parent, err := this.repo.GetPostByID(post.Parent)
+		if err == vars.ErrNotFound {
+			return fmt.Errorf("%w: post parent do not exists", vars.ErrConflict)
+		}
+		if err != nil {
+			return err
+		}
+		if parent.Thread != threadID {
+			return fmt.Errorf("%w: parent post was created in another thread", vars.ErrConflict)
+		}
+	}
+
+	return nil
 }

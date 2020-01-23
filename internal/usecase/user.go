@@ -1,89 +1,50 @@
 package usecase
 
 import (
+	"fmt"
+	"github.com/shadkain/db_hw/internal/vars"
 	"github.com/shadkain/db_hw/internal/models"
 )
 
-func (uc *usecaseImpl) AddUser(newUser models.NewUser, nickname string) (User models.User, Err error) {
-	if err := uc.repo.InsertUser(newUser, nickname); err != nil {
-		return models.User{}, err
-	}
-
-	user := models.User{
-		About:    newUser.About,
-		Email:    newUser.Email,
-		Fullname: newUser.Fullname,
-		Nickname: nickname,
-	}
-
-	return user, nil
+func (this *usecaseImpl) GetUserByNickname(nickname string) (*models.User, error) {
+	return this.repo.GetUserByNickname(nickname)
 }
 
-func (uc *usecaseImpl) GetUsersByForum(slug, limit, since, desc string) (Users *models.Users, Err error) {
-	users, err := uc.repo.SelectUsersByForum(slug, limit, since, desc)
-	if err != nil {
-		return users, err
+func (this *usecaseImpl) CreateUser(nickname, email, fullname, about string) ([]*models.User, error) {
+	if exUsers, err := this.repo.GetUsersByNicknameOrEmail(nickname, email); err != nil && err != vars.ErrNotFound {
+		return nil, err
+	} else if exUsers != nil {
+		return exUsers, vars.ErrConflict
 	}
 
-	return users, nil
+	user, err := this.repo.CreateUser(nickname, email, fullname, about)
+
+	return []*models.User{user}, err
 }
 
-func (uc *usecaseImpl) GetUsersByNicknameOrEmail(email string, nickname string) (User []models.User, Err error) {
-	users, err := uc.repo.SelectUsersByNicknameOrEmail(email, nickname)
-
+func (this *usecaseImpl) UpdateUser(nickname, email, fullname, about string) (*models.User, error) {
+	exUser, err := this.repo.GetUserByNickname(nickname)
 	if err != nil {
-		return users, err
+		return nil, err
 	}
 
-	return users, nil
-}
-
-func (uc *usecaseImpl) GetUserByNickname(nickname string) (user models.User, Err error) {
-	user, err := uc.repo.SelectUserByNickname(nickname)
-
-	if err != nil {
-		return user, err
+	if email == "" {
+		email = exUser.Email
+	} else {
+		if userByEmail, _ := this.repo.GetUserByEmail(email); userByEmail != nil && userByEmail.Nickname != nickname {
+			return nil, fmt.Errorf("%w: user with this email already exists", vars.ErrConflict)
+		}
+	}
+	if fullname == "" {
+		fullname = exUser.Fullname
+	}
+	if about == "" {
+		about = exUser.About
 	}
 
-	return user, nil
-}
-
-func (uc *usecaseImpl) GetUsersByEmail(email string) (User []models.User, Err error) {
-	users, err := uc.repo.SelectUsersByEmail(email)
-
-	if err != nil {
-		return users, err
+	if err := this.repo.UpdateUserByNickname(nickname, email, fullname, about); err != nil {
+		return nil, err
 	}
 
-	return users, nil
-}
-
-func (uc *usecaseImpl) SetUser(newProfile models.NewUser, nickname string) (User models.User, Err error) {
-	curentUser, err := uc.repo.SelectUserByNickname(nickname)
-	if err != nil {
-		return models.User{}, err
-	}
-
-	if newProfile.Email == "" {
-		newProfile.Email = curentUser.Email
-	}
-	if newProfile.About == "" {
-		newProfile.About = curentUser.About
-	}
-	if newProfile.Fullname == "" {
-		newProfile.Fullname = curentUser.Fullname
-	}
-
-	if err := uc.repo.UpdateUser(newProfile, nickname); err != nil {
-		return models.User{}, err
-	}
-
-	user := models.User{
-		About:    newProfile.About,
-		Email:    newProfile.Email,
-		Fullname: newProfile.Fullname,
-		Nickname: nickname,
-	}
-
-	return user, nil
+	return this.repo.GetUserByNickname(nickname)
 }

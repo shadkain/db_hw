@@ -1,23 +1,40 @@
 package usecase
 
 import (
-	"github.com/shadkain/db_hw/internal/models"
+	"github.com/shadkain/db_hw/internal/reqmodels"
 )
 
-func (uc *usecaseImpl) GetStatus() (Status models.Status, Err error) {
-	status, err := uc.repo.SelectStatus()
-
+func (this *usecaseImpl) GetStatus() (s reqmodels.Status, err error) {
+	forum, err := this.repo.CountForums()
 	if err != nil {
-		return models.Status{}, err
+		return
 	}
 
-	return status, nil
+	post, err := this.repo.CountPosts()
+	if err != nil {
+		return
+	}
+
+	thread, err := this.repo.CountThreads()
+	if err != nil {
+		return
+	}
+
+	user, err := this.repo.CountUsers()
+	if err != nil {
+		return
+	}
+
+	s = reqmodels.Status{
+		Forum:  forum,
+		Post:   post,
+		Thread: thread,
+		User:   user,
+	}
+
+	return
 }
 
-func (uc *usecaseImpl) ClearAll() (Err error) {
-	if err := uc.repo.ClearAll(); err != nil {
-		return err
-	}
-
-	return nil
+func (this *usecaseImpl) Clear() error {
+	return this.repo.Clear()
 }

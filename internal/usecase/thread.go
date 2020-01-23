@@ -1,109 +1,53 @@
 package usecase
 
 import (
-	"errors"
+	"fmt"
+	"github.com/shadkain/db_hw/internal/reqmodels"
+	"github.com/shadkain/db_hw/internal/vars"
 	"github.com/shadkain/db_hw/internal/models"
-	"strconv"
+	"time"
 )
 
-func (uc *usecaseImpl) AddThread(newThread models.NewThread, forum string) (Thread models.Thread, Err error) {
-	threads, err := uc.repo.SelectThreadsBySlug(newThread.Slug)
-	if len(*threads) > 0 {
-		return *(*threads)[0], errors.New("conflict")
-	}
-	lastID, err := uc.repo.InsertThread(newThread, forum)
-	if err != nil {
-		return models.Thread{}, err
-	}
-
-	thread := models.Thread{
-		Author:  newThread.Author,
-		Created: newThread.Created,
-		Forum:   forum,
-		ID:      lastID,
-		Message: newThread.Message,
-		Slug:    newThread.Slug,
-		Title:   newThread.Title,
-		Votes:   0,
-	}
-
-	return thread, nil
+func (this *usecaseImpl) GetThread(threadSlugOrID string) (*models.Thread, error) {
+	return this.repo.GetThreadBySlugOrID(threadSlugOrID)
 }
 
-func (uc *usecaseImpl) GetThreadBySlug(slugOrID string) (Thread models.Thread, Err error) {
-	var thread models.Thread
-	id, err := strconv.Atoi(slugOrID)
+func (this *usecaseImpl) GetThreadPosts(threadSlugOrID string, limit int, since *int, sort string, desc bool) (models.Posts, error) {
+	thread, err := this.repo.GetThreadFieldsBySlugOrID("id", threadSlugOrID)
 	if err != nil {
-		threads, err := uc.repo.SelectThreadsBySlug(slugOrID)
-		if err != nil {
-			return models.Thread{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Thread{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
-	} else {
-		threads, err := uc.repo.SelectThreadsByID(id)
-		if err != nil {
-			return models.Thread{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Thread{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
+		return nil, err
 	}
 
-	return thread, nil
+	return this.repo.GetThreadPosts(thread.ID, limit, since, sort, desc)
 }
 
-func (uc *usecaseImpl) GetThreadsByForum(forum string, limit string, since string, desc string) (Threads *models.Threads, Err error) {
-	threads, err := uc.repo.SelectThreadsByForum(forum, limit, since, desc)
-	if err != nil {
-		return threads, err
+func (this *usecaseImpl) CreateThread(forumSlug string, thread reqmodels.ThreadCreate) (*models.Thread, error) {
+	if _, err := this.repo.GetUserNickname(thread.Author); err != nil {
+		return nil, err
 	}
 
-	return threads, nil
+	forum, err := this.repo.GetForumSlug(forumSlug)
+	if err != nil {
+		return nil, err
+	}
+
+	if thread.Slug != "" {
+		existing, err := this.repo.GetThreadBySlug(thread.Slug)
+		if err != nil && err != vars.ErrNotFound {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, fmt.Errorf("%w: thread with this slug already exists", vars.ErrConflict)
+		}
+	}
+
+	if thread.Created == "" {
+		thread.Created = time.Now().Format(time.RFC3339)
+	}
+
+	return this.repo.CreateThread(forum, thread)
 }
 
-func (uc *usecaseImpl) SetThread(changeThread models.ChangeThread, slugOrID string) (Thread models.Thread, Err error) {
-	thread := models.Thread{}
-	id, err := strconv.Atoi(slugOrID)
-	if err != nil {
-		threads, err := uc.repo.SelectThreadsBySlug(slugOrID)
-		if err != nil {
-			return models.Thread{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Thread{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
-		id = (*threads)[0].ID
-	} else {
-		threads, err := uc.repo.SelectThreadsByID(id)
-		if err != nil {
-			return models.Thread{}, err
-		}
-		if len(*threads) != 1 {
-			return models.Thread{}, errors.New("Can't find thread")
-		}
-		thread = *(*threads)[0]
-		id = (*threads)[0].ID
-	}
-
-	if changeThread.Message == "" {
-		changeThread.Message = thread.Message
-	} else {
-		thread.Message = changeThread.Message
-	}
-	if changeThread.Title == "" {
-		changeThread.Title = thread.Title
-	} else {
-		thread.Title = changeThread.Title
-	}
-
-	if err := uc.repo.UpdateThread(changeThread, id); err != nil {
-		return models.Thread{}, err
-	}
-
-	return thread, nil
+func (this *usecaseImpl) UpdateThread(threadSlugOrID string, message, title string) (*models.Thread, error) {
+	return this.repo.UpdateThread(threadSlugOrID, message, title)
 }

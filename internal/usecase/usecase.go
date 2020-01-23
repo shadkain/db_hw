@@ -3,6 +3,7 @@ package usecase
 import (
 	"github.com/shadkain/db_hw/internal/models"
 	"github.com/shadkain/db_hw/internal/repository"
+	"github.com/shadkain/db_hw/internal/reqmodels"
 )
 
 type usecaseImpl struct {
@@ -16,28 +17,27 @@ func NewUsecase(repo repository.Repository) Usecase {
 }
 
 type Usecase interface {
-	AddForum(newForum models.NewForum) (forum models.Forum, Err error)
-	GetForumsBySlug(slug string) (forum []models.Forum, Err error)
-
-	AddPosts(newPosts models.NewPosts, slug_or_id string) (posts models.Posts, Err error)
-	SetPost(changePost models.ChangePost, postID int) (Post models.Post, Err error)
-	GetPostByID(ID int, related string) (Post models.PostDetails, Err error)
-	GetPosts(slugOrID, limit, since, sort, desc string) (posts *models.Posts, Err error)
-
-	AddThread(newThread models.NewThread, forum string) (thread models.Thread, Err error)
-	SetThread(changeThread models.ChangeThread, slugOrID string) (Thread models.Thread, Err error)
-	GetThreadBySlug(slugOrID string) (Thread models.Thread, Err error)
-	GetThreadsByForum(forum string, limit string, since string, desc string) (Threads *models.Threads, Err error)
-
-	AddUser(newUser models.NewUser, nickname string) (user models.User, Err error)
-	GetUsersByForum(slug, limit, since, desc string) (Users *models.Users, Err error)
-	GetUserByNickname(nickname string) (user models.User, Err error)
-	GetUsersByEmail(email string) (user []models.User, Err error)
-	GetUsersByNicknameOrEmail(email string, nickname string) (user []models.User, Err error)
-	SetUser(newProfile models.NewUser, nickname string) (user models.User, Err error)
-
-	SetVote(newVote models.NewVote, slugOrID string) (Thread models.Thread, Err error)
-
-	GetStatus() (Status models.Status, Errr error)
-	ClearAll() (Err error)
+	// Forum
+	GetForum(slug string) (*models.Forum, error)
+	GetForumThreads(forumSlug, since string, limit int, desc bool) ([]*models.Thread, error)
+	GetForumUsers(forum, since string, limit int, desc bool) ([]*models.User, error)
+	CreateForum(title, slug, nickname string) (*models.Forum, error)
+	// Thread
+	GetThread(threadSlugOrID string) (*models.Thread, error)
+	GetThreadPosts(threadSlugOrID string, limit int, since *int, sort string, desc bool) ([]*models.Post, error)
+	CreateThread(forumSlug string, thread reqmodels.ThreadCreate) (*models.Thread, error)
+	UpdateThread(threadSlugOrID string, message, title string) (*models.Thread, error)
+	// Post
+	GetPostDetails(id int, related []string) (*models.PostDetails, error)
+	CreatePosts(threadSlugOrID string, posts []*reqmodels.PostCreate) ([]*models.Post, error)
+	UpdatePost(id int, message string) (*models.Post, error)
+	// Vote
+	VoteForThread(threadSlugOrID string, vote reqmodels.Vote) (*models.Thread, error)
+	// User
+	GetUserByNickname(nickname string) (*models.User, error)
+	CreateUser(nickname, email, fullname, about string) ([]*models.User, error)
+	UpdateUser(nickname, email, fullname, about string) (*models.User, error)
+	// Service
+	GetStatus() (reqmodels.Status, error)
+	Clear() error
 }
