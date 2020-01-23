@@ -1,25 +1,37 @@
 package main
 
 import (
-	"github.com/labstack/echo"
+	"fmt"
 	"github.com/shadkain/db_hw/internal/delivery"
 	"github.com/shadkain/db_hw/internal/storage"
 	"github.com/shadkain/db_hw/internal/usecase"
+	"github.com/valyala/fasthttp"
+	"log"
+	"os"
 )
 
-func main() {
-	e := echo.New()
+const PORT = 5000
 
-	st := storage.NewStorage()
-	if err := st.Open("postgresql://forum_user:forum_pass@localhost:5432/forum_db"); err != nil {
-		return
+func main() {
+	storage := storage.NewStorage()
+	if err := storage.Open(getDatabaseUrl("dev")); err != nil {
+		log.Fatal(err)
 	}
 
-	uc := usecase.NewUsecase(st.Repository())
-	handler := delivery.NewDelivery(uc)
-	handler.Configure(e)
+	usecase := usecase.NewUsecase(storage.Repository())
+	handler := delivery.NewHandler(usecase)
 
-	if err := e.Start("0.0.0.0:5000"); err != nil {
-		return
+	fmt.Printf("→ Started listening port: %d\n", PORT)
+	log.Fatal(fasthttp.ListenAndServe(fmt.Sprintf(":%d", PORT), handler.GetHandleFunc()))
+}
+
+func getDatabaseUrl(mode string) string {
+	switch mode {
+	case "dev":
+		return "postgres://jason:@localhost:2389/subd"
+	case "prod":
+		return os.Getenv("DATABASE_URL")
+	default:
+		panic("unknown mode")
 	}
 }
