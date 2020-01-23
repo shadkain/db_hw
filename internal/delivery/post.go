@@ -1,138 +1,66 @@
 package delivery
 
 import (
-	"github.com/shadkain/db_hw/internal/models"
-	"github.com/jackc/pgx"
-	"github.com/labstack/echo"
+	"encoding/json"
+	"github.com/shadkain/db_hw/internal/reqmodels"
+	"github.com/valyala/fasthttp"
 	"strconv"
-	"net/http"
+	"strings"
 )
 
-func (d *Delivery) createPosts(c echo.Context) error {
-	newPosts := models.NewPosts{}
-
-	if err := c.Bind(&newPosts); err != nil {
-		return err
-	}
-
-	posts, err := d.uc.AddPosts(newPosts, c.Param("slug_or_id"))
+func (this *Handler) getPostDetails(c *fasthttp.RequestCtx) {
+	id, _ := strconv.Atoi(PathParam(c, "id"))
+	related := strings.Split(QueryParam(c, "related"), ",")
+	details, err := this.uc.GetPostDetails(id, related)
 	if err != nil {
-		_, ok := err.(pgx.PgError)
-		if !ok {
-			if err.Error() == "Can't find thread" {
-				if err := c.JSON(http.StatusNotFound, models.Error{"Can't find thread"}); err != nil {
-					return err
-				}
-				return nil
-			}
-			if err := c.JSON(http.StatusConflict, models.Error{err.Error()}); err != nil {
-				return err
-			}
-			return nil
-		}
-		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find user"}); err != nil {
-			return err
-		}
-		return nil
+		Error(c, err)
+		return
 	}
 
-	if err := c.JSON(http.StatusCreated, posts); err != nil {
-		return err
+	result := map[string]interface{}{
+		"post": details.Post,
 	}
 
-	return nil
+	for _, r := range related {
+		switch r {
+		case "user":
+			result["author"] = details.Author
+		case "forum":
+			result["forum"] = details.Forum
+		case "thread":
+			result["thread"] = details.Thread
+		}
+	}
+
+	Ok(c, result)
 }
 
-func (d *Delivery) takePostByID(ctx echo.Context) error {
-	ID := ctx.Param("id")
-	postID, err := strconv.Atoi(ID)
-	if err != nil {
-		return nil
+func (this *Handler) createPost(c *fasthttp.RequestCtx) {
+	var posts []*reqmodels.PostCreate
+	if err := json.Unmarshal(c.PostBody(), &posts); err != nil {
+		BadRequest(c, err)
+		return
 	}
 
-	related := ctx.QueryParam("related")
-	println(related)
-
-	postDetails, err := d.uc.GetPostByID(postID, related)
-	if err != nil {
-		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find post"}); err != nil {
-			return err
-		}
-		return nil
+	if result, err := this.uc.CreatePosts(PathParam(c, "slug_or_id"), posts); err != nil {
+		Error(c, err)
+	} else {
+		Created(c, result)
 	}
-
-	if err := ctx.JSON(http.StatusOK, postDetails); err != nil {
-		return err
-	}
-
-	return nil
 }
 
-func (d *Delivery) takePosts(ctx echo.Context) error {
-	slugOrID := ctx.Param("slug_or_id")
-
-	limit := ctx.QueryParam("limit")
-	since := ctx.QueryParam("since")
-	sort := ctx.QueryParam("sort")
-	desc := ctx.QueryParam("desc")
-
-	if limit == "" {
-		limit = "100"
+func (this *Handler) updatePost(c *fasthttp.RequestCtx) {
+	var pu reqmodels.PostUpdate
+	if err := json.Unmarshal(c.PostBody(), &pu); err != nil {
+		BadRequest(c, err)
+		return
 	}
 
-	if sort == "" {
-		sort = "flat"
-	}
-	if desc == "" {
-		desc = "false"
-	}
-	if since == "" {
-		if desc == "false" {
-			since = "0"
-		} else {
-			since = "999999999"
-		}
-	}
+	id, _ := strconv.Atoi(PathParam(c, "id"))
 
-	posts, err := d.uc.GetPosts(slugOrID, limit, since, sort, desc)
-	if err != nil {
-		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find thread"}); err != nil {
-			return err
-		}
-		return nil
+	if thread, err := this.uc.UpdatePost(id, pu.Message); err != nil {
+		Error(c, err)
+	} else {
+		Ok(c, thread)
 	}
-
-	if err := ctx.JSON(http.StatusOK, posts); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (d *Delivery) changePost(c echo.Context) error {
-	changePost := models.ChangePost{}
-
-	if err := c.Bind(&changePost); err != nil {
-		return err
-	}
-
-	ID := c.Param("id")
-	postID, err := strconv.Atoi(ID)
-	if err != nil {
-		return err
-	}
-
-	post, err := d.uc.SetPost(changePost, postID)
-	if err != nil {
-		if err := c.JSON(http.StatusNotFound, models.Error{"Can't find post"}); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if err := c.JSON(http.StatusOK, post); err != nil {
-		return err
-	}
-
-	return nil
 }

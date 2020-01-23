@@ -1,59 +1,60 @@
 package delivery
 
 import (
-	"github.com/shadkain/db_hw/internal/models"
-	"github.com/labstack/echo"
-	"net/http"
+	"encoding/json"
+	"errors"
+	"github.com/shadkain/db_hw/internal/reqmodels"
+	"github.com/shadkain/db_hw/internal/vars"
+	"github.com/valyala/fasthttp"
+	"strconv"
 )
 
-func (d *Delivery) createForum(c echo.Context) error {
-	newForum := models.NewForum{}
-	if err := c.Bind(&newForum); err != nil {
-		return err
+func (this *Handler) getForumDetails(c *fasthttp.RequestCtx) {
+	if forum, err := this.uc.GetForum(PathParam(c, "slug")); err != nil {
+		Error(c, err)
+	} else {
+		Ok(c, forum)
 	}
-
-	forums, err := d.uc.GetForumsBySlug(newForum.Slug)
-	if err != nil {
-		return err
-	}
-	if len(forums) > 0 {
-		if err := c.JSON(http.StatusConflict, forums[0]); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	forum, err := d.uc.AddForum(newForum)
-	if err != nil {
-		if err.Error() == "Can't find user by nickname" {
-			if err := c.JSON(http.StatusNotFound, models.Error{"Can't find user"}); err != nil {
-				return err
-			}
-			return nil
-		}
-		return err
-	}
-
-	if err := c.JSON(http.StatusCreated, forum); err != nil {
-		return err
-	}
-
-	return nil
 }
 
-func (d *Delivery) takeForum(ctx echo.Context) error {
-	forums, err := d.uc.GetForumsBySlug(ctx.Param("slug"))
+func (this *Handler) getForumThreads(c *fasthttp.RequestCtx) {
+	limit, _ := strconv.Atoi(QueryParam(c, "limit"))
+	desc, _ := strconv.ParseBool(QueryParam(c, "desc"))
 
-	if err != nil || len(forums) == 0 {
-		if err := ctx.JSON(http.StatusNotFound, models.Error{"Can't find forum by slug"}); err != nil {
-			return err
-		}
-		return nil
+	if threads, err := this.uc.GetForumThreads(PathParam(c, "slug"), QueryParam(c, "since"), limit, desc); err != nil {
+		Error(c, err)
+	} else {
+		Ok(c, threads)
+	}
+}
+
+func (this *Handler) getForumUsers(c *fasthttp.RequestCtx) {
+	limit, _ := strconv.Atoi(QueryParam(c, "limit"))
+	desc, _ := strconv.ParseBool(QueryParam(c, "desc"))
+
+	if users, err := this.uc.GetForumUsers(PathParam(c, "slug"), QueryParam(c, "since"), limit, desc); err != nil {
+		Error(c, err)
+	} else {
+		Ok(c, users)
+	}
+}
+
+func (this *Handler) handleForumCreate(c *fasthttp.RequestCtx) {
+	var fc reqmodels.ForumCreate
+	if err := json.Unmarshal(c.PostBody(), &fc); err != nil {
+		BadRequest(c, err)
+		return
 	}
 
-	if err := ctx.JSON(http.StatusOK, forums[0]); err != nil {
-		return err
+	forum, err := this.uc.CreateForum(fc.Title, fc.Slug, fc.User)
+	if errors.Is(err, vars.ErrConflict) {
+		Conflict(c, forum)
+		return
 	}
 
-	return nil
+	if err != nil {
+		Error(c, err)
+	} else {
+		Created(c, forum)
+	}
 }
