@@ -1,120 +1,109 @@
--- Users
+CREATE EXTENSION IF NOT EXISTS citext;
 
-CREATE TABLE users (
-    id serial not null primary key,
-    nickname varchar not null,
-    email varchar not null,
-    fullname varchar,
-    about text
+-- User
+
+CREATE TABLE "user" (
+    "id" serial,
+    "nickname" citext not null primary key,
+    "email" citext not null unique,
+    "fullname" text not null,
+    "about" text not null default ''
 );
 
-CREATE UNIQUE INDEX user_id_uindex ON users USING btree (id);
-CREATE UNIQUE INDEX user_nickname_uindex ON users USING btree (nickname);
-CREATE UNIQUE INDEX user_email_uindex ON users USING btree (email);
+-- Forum
 
--- Forums
-
-CREATE TABLE forums (
-    id serial not null primary key,
-    slug varchar not null,
-    title varchar not null,
-    posts int default 0 not null,
-    threads int default 0 not null,
-    creator varchar not null references users(nickname)
+CREATE TABLE "forum" (
+    "id" serial,
+    "slug" citext not null primary key,
+    "title" text not null,
+    "posts" int not null default 0,
+    "threads" int not null default 0,
+    "user" varchar not null
 );
 
-CREATE UNIQUE INDEX forum_id_uindex ON forums USING btree (id);
-CREATE UNIQUE INDEX forum_slug_uindex ON forums USING btree (slug);
+-- Thread
 
--- Threads
-
-CREATE TABLE threads (
-    id serial not null primary key,
-    slug varchar,
-    title varchar not null,
-    message text not null,
-    created timestamptz not null default now(),
-    votes int default 0 not null,
-    forum varchar not null references forums(slug),
-    author varchar not null references users(nickname)
+CREATE TABLE "thread" (
+    "id" serial primary key,
+    "slug" citext not null,
+    "title" text not null,
+    "message" text not null,
+    "votes" int not null default 0,
+    "created" timestamptz not null,
+    "forum" varchar not null,
+    "author" varchar not null
 );
+CREATE INDEX ON "thread" ("slug");
+CREATE INDEX ON "thread" ("created", "forum");
+CREATE INDEX ON "thread" ("forum", "author");
 
-CREATE UNIQUE INDEX table_name_id_uindex ON threads USING btree (id);
-CREATE UNIQUE INDEX table_name_slug_uindex ON threads USING btree (slug);
+-- Post
 
--- Posts
-
-CREATE TABLE posts (
-    id serial not null primary key,
-    created timestamptz not null default '1970-01-01 00:00:00+00'::timestamptz,
-    isedited boolean default false not null,
-    message text not null,
-    parent int default 0 not null,
-    forum varchar not null references forums(slug),
-    thread int not null references threads(id),
-    author varchar not null references users(nickname)
+CREATE TABLE "post" (
+    "id" serial primary key,
+    "parent" int not null,
+    "path" text not null default '',
+    "thread" int not null,
+    "message" text not null,
+    "isEdited" bool not null default false,
+    "created" timestamptz not null,
+    "forum" varchar not null,
+    "author" varchar not null
 );
+CREATE INDEX ON "post" ("thread");
+CREATE INDEX ON "post" (substring("path",1,7));
+CREATE INDEX ON "post" ("forum", "author");
 
-CREATE UNIQUE INDEX post_id_uindex ON posts USING btree (id);
+-- Vote
 
--- Votes
-
-CREATE TABLE votes (
-    id serial not null primary key,
-    voice smallint not null,
-    thread int not null references threads(id),
-    nickname varchar not null references users(nickname)
+CREATE TABLE "vote" (
+    "id" serial primary key,
+    "thread" int not null,
+    "nickname" varchar not null,
+    "voice" int not null
 );
+CREATE INDEX ON "vote" ("thread", "nickname");
 
-ALTER TABLE ONLY votes ADD CONSTRAINT subscribe_subscriber_id_followee_id_key UNIQUE (nickname, thread);
-CREATE UNIQUE INDEX vote_id_uindex ON votes USING btree (id);
+-- Forum-user
 
--- Functions
+CREATE TABLE "forum_user" (
+    "forum" varchar not null,
+    "user" varchar not null
+);
+CREATE UNIQUE INDEX ON "forum_user" ("user", "forum");
 
-CREATE OR REPLACE FUNCTION vote_add() RETURNS TRIGGER AS $emp_audit$
-    BEGIN
-    UPDATE threads
-    SET votes = votes + NEW.voice
-    WHERE id = NEW.thread;
-    RETURN NULL;
-    END;
-    $emp_audit$ LANGUAGE plpgsql;
+-- Functions & triggers
 
+CREATE FUNCTION inc_forum_thread() RETURNS TRIGGER AS
+$$
+BEGIN
+    UPDATE forum SET threads = threads + 1 WHERE slug=NEW.forum;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION thread_add() RETURNS TRIGGER AS $emp_audit$
-    BEGIN
-    UPDATE forums
-    SET threads = threads + 1
-    WHERE slug = NEW.forum;
-    RETURN NULL;
-    END;
-$emp_audit$ LANGUAGE plpgsql;
-
-
-CREATE OR REPLACE FUNCTION post_add() RETURNS TRIGGER AS $emp_audit$
-    BEGIN
-    UPDATE forums
-    SET posts = posts + 1
-    WHERE slug = NEW.forum;
-    RETURN NULL;
-    END;
-$emp_audit$ LANGUAGE plpgsql;
-
--- Triggers
-
-CREATE TRIGGER vote_insert
-    AFTER INSERT
-    ON votes
-    FOR EACH ROW EXECUTE PROCEDURE vote_add(vote);
-
+CREATE FUNCTION add_forum_user() RETURNS TRIGGER AS
+$$
+BEGIN
+    INSERT INTO forum_user (forum, "user") VALUES (NEW.forum, NEW.author) ON CONFLICT DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER thread_insert
     AFTER INSERT
-    ON threads
-    FOR EACH ROW EXECUTE PROCEDURE thread_add();
+    ON thread
+    FOR EACH ROW
+EXECUTE PROCEDURE inc_forum_thread();
 
-
-CREATE TRIGGER post_insert
+CREATE TRIGGER forum_user
     AFTER INSERT
-    ON posts
-    FOR EACH ROW EXECUTE PROCEDURE post_add();
+    ON post
+    FOR EACH ROW
+EXECUTE PROCEDURE add_forum_user();
+
+CREATE TRIGGER forum_user
+    AFTER INSERT
+    ON thread
+    FOR EACH ROW
+EXECUTE PROCEDURE add_forum_user();
