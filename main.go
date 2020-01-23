@@ -14,7 +14,7 @@ const PORT = 5000
 
 func main() {
 	storage := storage.NewStorage()
-	if err := storage.Open(getDatabaseUrl("dev")); err != nil {
+	if err := storage.Open(getDatabaseUrl("prod")); err != nil {
 		log.Fatal(err)
 	}
 
